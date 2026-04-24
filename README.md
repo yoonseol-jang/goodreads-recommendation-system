@@ -54,6 +54,7 @@ Before beginning the recommender-system components, you will need to preprocess 
 We recommend writing scripts to do this in advance and saving the resulting datasets for future use, preferably in Parquet format. This will make your later experiments faster and more reproducible, here is why:
 The raw interaction file is large. CSV is convenient for distribution, but inefficient for repeated Spark jobs. One of your first steps should be to convert the interaction file to Parquet and use the Parquet version for all downstream computation.
 You can use code like this to do so:
+
 interactions = spark.read.csv(
     "hdfs:///user/pw44_nyu_edu/goodreads_interactions.csv",
     header=True,
