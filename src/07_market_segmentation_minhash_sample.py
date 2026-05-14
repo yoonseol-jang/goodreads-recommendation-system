@@ -6,6 +6,7 @@ from pyspark.sql.functions import (
 from pyspark.ml.feature import CountVectorizer, MinHashLSH
 
 
+
 NETID = "dk5406"
 
 spark = (

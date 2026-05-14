@@ -7,6 +7,7 @@ from pyspark.sql.functions import (
 from pyspark.sql.window import Window
 from pyspark.mllib.evaluation import RankingMetrics
 
+
 spark = (
     SparkSession.builder
     .appName("Goodreads Popularity Baseline Sample")
