@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Logs
+logs/
+*.log
+
+# Data
+data/
+*.csv
+*.parquet
+
+# System files
+.DS_Store
+
+# Environment
+.env
+.venv/
