@@ -1,12 +1,11 @@
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import (
-    col, count, row_number, collect_list, collect_set,
-    size, array_intersect, avg, lit
+    col, count, row_number, collect_set,
+    size, array_intersect, avg,
+    sort_array, collect_list, struct, expr
 )
 from pyspark.sql.window import Window
-
-
-NETID = "dk5406"
+from pyspark.mllib.evaluation import RankingMetrics
 
 spark = (
     SparkSession.builder
@@ -47,11 +46,12 @@ print("Top popular books:")
 popular_books.show(20)
 
 
-# Keep more than 100 candidates because we will remove books
-# each user has already seen in train.
+# Keep a deeper candidate pool than 100 because we will remove books
+# each user has already seen in train. 1000 gives heavy readers
+# enough headroom to still receive 100 recs after the anti-join.
 top_candidates = (
     popular_books
-    .limit(500)
+    .limit(1000)
     .withColumn("pop_rank", row_number().over(Window.orderBy(col("read_count").desc())))
     .select("book_id", "read_count", "pop_rank")
 )
@@ -84,7 +84,9 @@ def evaluate_split(eval_df, split_name):
         .join(seen_train, on=["user_id", "book_id"], how="left_anti")
     )
 
-    # Take top 100 recommendations for each user
+    # Rank candidates by popularity per user, keep top 100,
+    # and collect them as an ORDERED list (sort_array on the (rn, book_id)
+    # struct preserves popularity order through the groupBy).
     w = Window.partitionBy("user_id").orderBy(col("pop_rank"))
 
     recs = (
@@ -92,33 +94,54 @@ def evaluate_split(eval_df, split_name):
         .withColumn("rn", row_number().over(w))
         .where(col("rn") <= 100)
         .groupBy("user_id")
-        .agg(collect_list("book_id").alias("rec_books"))
+        .agg(sort_array(collect_list(struct("rn", "book_id"))).alias("ranked"))
+        .withColumn("rec_books", expr("transform(ranked, x -> x.book_id)"))
+        .drop("ranked")
     )
 
     eval_table = (
         labels
         .join(recs, on="user_id", how="inner")
+    )
+
+    # ----------------------------------------
+    # Spark RankingMetrics: MAP, NDCG@100, precision@100
+    # ----------------------------------------
+    pred_and_labels = (
+        eval_table
+        .select("rec_books", "label_books")
+        .rdd
+        .map(lambda r: (list(r["rec_books"]), list(r["label_books"])))
+    )
+
+    rm = RankingMetrics(pred_and_labels)
+    map_score = rm.meanAveragePrecision
+    ndcg_at_100 = rm.ndcgAt(100)
+    precision_at_100 = rm.precisionAt(100)
+
+    # ----------------------------------------
+    # recall@100: computed by hand because older Spark
+    # RankingMetrics does not expose recallAt.
+    # ----------------------------------------
+    recall_df = (
+        eval_table
         .withColumn("hits", size(array_intersect(col("rec_books"), col("label_books"))))
         .withColumn("num_labels", size(col("label_books")))
-        .withColumn("precision_at_100", col("hits") / lit(100.0))
         .withColumn("recall_at_100", col("hits") / col("num_labels"))
+        .agg(avg("recall_at_100").alias("mean_recall_at_100"))
     )
-
-    print(f"{split_name} evaluation preview:")
-    eval_table.select(
-        "user_id", "hits", "num_labels", "precision_at_100", "recall_at_100"
-    ).show(20)
-
-    metrics = (
-        eval_table
-        .agg(
-            avg("precision_at_100").alias("mean_precision_at_100"),
-            avg("recall_at_100").alias("mean_recall_at_100")
-        )
-    )
+    recall_at_100 = recall_df.collect()[0]["mean_recall_at_100"]
 
     print(f"{split_name} metrics:")
-    metrics.show()
+    print(f"  MAP             = {map_score:.6f}")
+    print(f"  NDCG@100        = {ndcg_at_100:.6f}")
+    print(f"  precision@100   = {precision_at_100:.6f}")
+    print(f"  recall@100      = {recall_at_100:.6f}")
+
+    metrics = spark.createDataFrame(
+        [(split_name, map_score, ndcg_at_100, precision_at_100, recall_at_100)],
+        ["split", "map", "ndcg_at_100", "precision_at_100", "recall_at_100"]
+    )
 
     output_path = f"{results_path}/{split_name}_metrics.parquet"
     metrics.write.mode("overwrite").parquet(output_path)
@@ -130,3 +153,4 @@ evaluate_split(validation, "validation")
 evaluate_split(test, "test")
 
 spark.stop()
+
