@@ -2,8 +2,6 @@
 
 Large-scale book recommender system and market segmentation pipeline built on 223M user-book interactions using Apache Spark on GCP Dataproc.
 
-**Authors:** Yoonseol Jang, David Lee, Donggyu Kim — DS-GA 1004 Big Data, Spring 2026
-
 ## Summary
 
 - **Dataset:** Goodreads interactions — 876K users, 2.4M books, 223M interactions
